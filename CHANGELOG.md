@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## [1.0.1] - 2026-06-19
+
+### Fixed
+
+- Fallback replay now queues with `streamingBehavior: "followUp"` so it no
+  longer throws "Agent is already processing" when `agent_end` fires while Pi
+  is still streaming.
+
+### Added
+
+- README images: hero, footer examples, fallback flow, command reference.
+
 ## [1.0.0] - 2026-06-19
 
 ### Added

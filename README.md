@@ -1,5 +1,7 @@
 # pi-model-router
 
+![pi-model-router hero](assets/hero.png)
+
 Dynamic, task-phase model routing for [Pi](https://pi.dev).
 
 `pi-model-router` watches what you are doing and automatically selects the best
@@ -16,6 +18,8 @@ respects manual model pins. If a provider/model errors mid-turn, it can mark tha
 model unhealthy, switch to a similar available model, and replay the prompt.
 
 ## Features
+
+![footer examples](assets/footer.png)
 
 - **Automatic phase routing** — switches model, reasoning level, and active tools
   based on prompt signals and recent tool usage.
@@ -97,6 +101,8 @@ Useful first commands:
 
 ## Commands
 
+![commands](assets/commands.png)
+
 | Command | Effect |
 | --- | --- |
 | `/route` / `/route status` | Show mode, phase, model, pin, budget, and health state. |
@@ -176,6 +182,8 @@ See [`model-router.example.json`](./model-router.example.json) for a fuller
 starter config.
 
 ## Runtime fallback
+
+![fallback flow](assets/fallback.png)
 
 When a selected model errors after Pi's own retry path, the router can:
 

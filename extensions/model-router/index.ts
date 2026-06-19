@@ -231,7 +231,10 @@ async function handleRuntimeFallback(
     const images = (store.lastUserImages as Array<Record<string, unknown>> | undefined) ?? [];
     const content = images.length ? [{ type: "text", text }, ...images] : text;
     try {
-      pi.sendUserMessage(content as never);
+      // `agent_end` fires while Pi still considers the agent streaming, so the
+      // replay must be queued rather than sent immediately. `followUp` waits
+      // for the failed turn to finish and then submits the original prompt.
+      pi.sendUserMessage(content as never, { streamingBehavior: "followUp" } as never);
     } catch (e) {
       store.pendingResubmit = false;
       toast(ctx, `model-router: replay failed: ${(e as Error).message}`, "warning");
