@@ -7,12 +7,12 @@
   "author": "davecodes",
   "repository": {
     "type": "git",
-    "url": "https://github.com/davecodes/pi-model-router.git"
+    "url": "https://github.com/Davidcreador/pi-model-router.git"
   },
   "bugs": {
-    "url": "https://github.com/davecodes/pi-model-router/issues"
+    "url": "https://github.com/Davidcreador/pi-model-router/issues"
   },
-  "homepage": "https://github.com/davecodes/pi-model-router#readme",
+  "homepage": "https://github.com/Davidcreador/pi-model-router#readme",
   "files": [
     "extensions/**/*",
     "model-router.example.json",

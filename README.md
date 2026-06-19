@@ -43,13 +43,13 @@ model unhealthy, switch to a similar available model, and replay the prompt.
 ### From GitHub
 
 ```bash
-pi install git:github.com/davecodes/pi-model-router@v1.0.0
+pi install git:github.com/Davidcreador/pi-model-router@v1.0.0
 ```
 
 Or from a branch/commit while testing:
 
 ```bash
-pi install git:github.com/davecodes/pi-model-router@main
+pi install git:github.com/Davidcreador/pi-model-router@main
 ```
 
 ### From npm
@@ -61,14 +61,14 @@ pi install npm:pi-model-router@1.0.0
 ### From a local checkout
 
 ```bash
-git clone https://github.com/davecodes/pi-model-router.git
+git clone https://github.com/Davidcreador/pi-model-router.git
 pi install ./pi-model-router
 ```
 
 ### Try without installing
 
 ```bash
-pi -e git:github.com/davecodes/pi-model-router@main
+pi -e git:github.com/Davidcreador/pi-model-router@main
 ```
 
 After installing, restart Pi or run:
