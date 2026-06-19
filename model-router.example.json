@@ -1,0 +1,102 @@
+{
+  "enabled": true,
+  "mode": "auto",
+  "defaultRoute": "implement",
+  "switchThreshold": 0.6,
+  "suggestThreshold": 0.35,
+  "minDwellTurns": 2,
+  "toolWindow": 6,
+  "pinReleasesOnPhaseChange": false,
+  "notify": "min",
+  "footer": true,
+  "log": true,
+  "guard": {
+    "interactiveOnly": true,
+    "disableInSubagents": true
+  },
+  "llm": {
+    "enabled": true,
+    "model": "openai-codex/gpt-5.4-mini",
+    "timeoutMs": 2500,
+    "deadbandLow": 0.2,
+    "deadbandHigh": 0.6
+  },
+  "budget": {
+    "enabled": true,
+    "maxSessionUsd": 5.0,
+    "warnAtPercent": 0.8
+  },
+  "calibration": {
+    "enabled": true,
+    "rate": 0.05,
+    "maxAdjust": 0.3
+  },
+  "runtimeFallback": {
+    "enabled": true,
+    "maxAttemptsPerTurn": 2,
+    "cooldownMs": 300000
+  },
+  "modelFallbacks": {
+    "cursor/composer-2.5:fast": [
+      "opencode-go/kimi-k2.7-code",
+      "openai-codex/gpt-5.4-mini",
+      "anthropic/claude-sonnet-4-6"
+    ],
+    "cursor/composer-2.5": [
+      "opencode-go/kimi-k2.7-code",
+      "openai-codex/gpt-5.4",
+      "anthropic/claude-sonnet-4-6"
+    ],
+    "openai-codex/gpt-5.5": [
+      "anthropic/claude-sonnet-4-6",
+      "opencode-go/kimi-k2.7-code",
+      "openai-codex/gpt-5.4"
+    ],
+    "anthropic/claude-sonnet-4-6": [
+      "openai-codex/gpt-5.5",
+      "opencode-go/kimi-k2.7-code",
+      "cursor/composer-2.5:fast"
+    ],
+    "anthropic/claude-opus-4-8": [
+      "anthropic/claude-sonnet-4-6",
+      "openai-codex/gpt-5.5"
+    ]
+  },
+  "rules": [
+    {
+      "match": ["production", "deploy", "release"],
+      "route": "review",
+      "reason": "Safety on prod-touching work"
+    }
+  ],
+  "routes": {
+    "investigate": {
+      "model": "cursor/composer-2.5:fast",
+      "thinkingLevel": "off",
+      "tools": ["read", "bash", "grep", "find", "ls"]
+    },
+    "plan": {
+      "model": "openai-codex/gpt-5.5",
+      "thinkingLevel": "high",
+      "tools": ["read", "grep", "find", "ls"],
+      "instructions": "You are in PLANNING MODE. Do not edit or write files. Read in full, explore the codebase, ask clarifying questions, then produce a phased plan with risks and the exact files to change."
+    },
+    "implement": {
+      "model": "anthropic/claude-sonnet-4-6",
+      "thinkingLevel": "high",
+      "tools": ["read", "bash", "edit", "write", "grep", "find", "ls"]
+    },
+    "review": {
+      "model": "anthropic/claude-opus-4-8",
+      "thinkingLevel": "high",
+      "tools": ["read", "bash", "grep", "find", "ls"],
+      "requiresVision": true,
+      "instructions": "You are reviewing. Focus on correctness, regressions, tests, security, and architecture boundaries. Do not modify files."
+    },
+    "debug": {
+      "model": "openai-codex/gpt-5.5",
+      "thinkingLevel": "xhigh",
+      "tools": ["read", "bash", "edit", "write", "grep", "find", "ls"]
+    }
+  }
+}

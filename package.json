@@ -1,0 +1,51 @@
+{
+  "name": "pi-model-router",
+  "version": "1.0.0",
+  "description": "Dynamic, task-phase model router for Pi. Auto-switches model + reasoning + tools by what you're doing (investigate/plan/implement/review/debug), with heuristic + optional LLM classification, sticky phases, hybrid-confidence UX, manual pin, calibration, budget guard, runtime error fallback, and full transparency.",
+  "type": "module",
+  "license": "MIT",
+  "author": "davecodes",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/davecodes/pi-model-router.git"
+  },
+  "bugs": {
+    "url": "https://github.com/davecodes/pi-model-router/issues"
+  },
+  "homepage": "https://github.com/davecodes/pi-model-router#readme",
+  "files": [
+    "extensions/**/*",
+    "model-router.example.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "coding-agent",
+    "model-router",
+    "routing",
+    "reasoning",
+    "tui"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/model-router"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck"
+  }
+}
