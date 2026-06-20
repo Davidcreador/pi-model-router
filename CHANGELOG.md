@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## [1.0.2] - 2026-06-19
+
+### Fixed
+
+- `/route` command now re-registers on every `session_start`, preventing it
+  from disappearing after `/reload` when the module is cached.
+
 ## [1.0.1] - 2026-06-19
 
 ### Fixed

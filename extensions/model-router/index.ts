@@ -58,7 +58,6 @@ let log: DecisionLog;
 let calibration: CalibrationMap = {};
 let cwd = process.cwd();
 let fingerprint = "";
-let commandsRegistered = false;
 
 /** Runtime overrides set via `/route` that must survive config hot-reload. */
 const overrides: { mode?: RouterMode; llmEnabled?: boolean } = {};
@@ -550,11 +549,11 @@ export default function modelRouter(pi: ExtensionAPI): void {
         }
       }
 
-      if (!commandsRegistered) {
-        registerCommands(pi, makeRuntime(pi));
-        registerShortcut(pi);
-        commandsRegistered = true;
-      }
+      // Register commands every session_start. On /reload the module may be
+      // cached, so a one-time guard can leave commands missing in the new
+      // runtime. registerIfFree/registerShortcut swallow conflicts safely.
+      registerCommands(pi, makeRuntime(pi));
+      registerShortcut(pi);
 
       for (const w of res.warnings) toast(ctx, w, "warning");
       refreshFooter(ctx);
