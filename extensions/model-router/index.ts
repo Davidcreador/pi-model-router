@@ -162,21 +162,53 @@ function isContextOverflow(msg: string): boolean {
 }
 
 /**
- * Replay the last genuine user prompt. Used both for same-model retries and
- * fallback hops. Sets `pendingResubmit` so the replayed input is not re-routed.
+ * Deferred replay: wait for Pi to be truly idle before sending the prompt.
  *
- * `deliverAs: "followUp"` queues the replay until the current (failed) turn
- * finishes. The runtime maps `deliverAs` to its internal `streamingBehavior`;
- * using the wrong name here was the root cause of the "Agent is already
- * processing" error. The action wrapper catches internal rejections itself and
- * emits them as `Extension "<runtime>" error`, so a try/catch at the call
- * site cannot intercept them — passing the correct option prevents the error.
+ * Calling `sendUserMessage` synchronously during `agent_end` is unreliable:
+ * Pi's internal retry system may not have fully settled, causing it to cancel
+ * the replayed turn with "Retry failed after N attempts: Retry cancelled".
+ *
+ * By polling `ctx.isIdle()` and sending only when the agent is truly idle,
+ * we get a clean fresh turn with no conflicts. When idle, `sendUserMessage`
+ * without `deliverAs` sends immediately and triggers a new turn directly.
+ *
+ * `pendingResubmit` is set right before the send (not before the wait) so a
+ * user message typed during the wait is still routed normally.
  */
-function replayPrompt(pi: ExtensionAPI, text: string): void {
-  store.pendingResubmit = true;
+function deferredReplay(pi: ExtensionAPI, ctx: ExtensionContext, text: string): void {
   const images = (store.lastUserImages as Array<Record<string, unknown>> | undefined) ?? [];
   const content = images.length ? [{ type: "text", text }, ...images] : text;
-  pi.sendUserMessage(content as never, { deliverAs: "followUp" } as never);
+
+  let elapsed = 0;
+  const interval = 100;
+  const maxWait = 5000;
+
+  const trySend = () => {
+    try {
+      // When the agent is truly idle, send immediately — no queue, no conflict
+      // with Pi's retry system. `sendUserMessage` without `deliverAs` triggers
+      // a fresh turn directly when idle.
+      if (ctx.isIdle()) {
+        store.pendingResubmit = true;
+        pi.sendUserMessage(content as never, {} as never);
+        return;
+      }
+      elapsed += interval;
+      if (elapsed >= maxWait) {
+        // Fallback: if Pi never goes idle within 5s, queue as followUp.
+        // This handles edge cases where isIdle() is unreliable.
+        store.pendingResubmit = true;
+        pi.sendUserMessage(content as never, { deliverAs: "followUp" } as never);
+        return;
+      }
+      setTimeout(trySend, interval);
+    } catch {
+      // Context may be stale after session shutdown/reload — abort silently.
+      store.pendingResubmit = false;
+    }
+  };
+  // Small initial delay to let agent_end cleanup finish.
+  setTimeout(trySend, interval);
 }
 
 /**
@@ -228,7 +260,7 @@ async function handleRuntimeFallback(
       "warning",
     );
     refreshFooter(ctx);
-    replayPrompt(pi, text);
+    deferredReplay(pi, ctx, text);
     return;
   }
 
@@ -258,10 +290,17 @@ async function handleRuntimeFallback(
   store.attemptedModels.add(pick.key);
   store.sameModelRetries = 0; // new model gets its own retry budget
   store.routerSwitching = true;
+  let switched = false;
   try {
-    await pi.setModel(pick.model);
+    switched = await pi.setModel(pick.model);
   } finally {
     store.routerSwitching = false;
+  }
+  if (!switched) {
+    // Model switch failed (e.g. not authenticated) — try next fallback or give up.
+    toast(ctx, `model-router: could not switch to ${short(pick.key)}; skipping`, "warning");
+    refreshFooter(ctx);
+    return;
   }
   store.pinnedModelKey = undefined; // a fallback hop is not a manual pin
 
@@ -277,7 +316,7 @@ async function handleRuntimeFallback(
     "warning",
   );
   refreshFooter(ctx);
-  replayPrompt(pi, text);
+  deferredReplay(pi, ctx, text);
 }
 
 // ─── core: process one user input ───────────────────────────────────────────

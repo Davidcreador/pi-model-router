@@ -1,6 +1,6 @@
 {
   "name": "pi-model-router",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Dynamic, task-phase model router for Pi. Auto-switches model + reasoning + tools by what you're doing (investigate/plan/implement/review/debug), with heuristic + optional LLM classification, sticky phases, hybrid-confidence UX, manual pin, calibration, budget guard, runtime error fallback, and full transparency.",
   "type": "module",
   "license": "MIT",

@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [1.0.4] - 2026-06-23
+
+### Fixed
+
+- **Deferred replay until idle**: the replayed prompt now waits for Pi to be
+  truly idle (polling `ctx.isIdle()`) before sending, instead of queuing a
+  `followUp` during `agent_end`. This eliminates the "Retry failed after N
+  attempts: Retry cancelled" error caused by Pi's internal retry system not
+  having fully settled when the replay was queued.
+- **setModel failure guard**: if a model switch fails (e.g. unauthenticated),
+  the router skips that fallback instead of replaying on the wrong model.
+- **Stale context guard**: the deferred replay catches errors from invalidated
+  contexts (session shutdown/reload during the wait) and cleans up
+  `pendingResubmit` silently.
+- **pendingResubmit timing**: `pendingResubmit` is now set right before the
+  actual send, not before the idle wait, so user messages typed during the
+  wait are still routed normally.
+
 ## [1.0.3] - 2026-06-23
 
 ### Fixed
