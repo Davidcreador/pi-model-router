@@ -84,7 +84,11 @@ export interface GuardConfig {
 export interface RuntimeFallbackConfig {
   /** Master switch. */
   enabled: boolean;
-  /** Max fallback hops within a single user request before giving up. */
+  /** How many times to retry the SAME model (replay the prompt) before
+   *  switching to a fallback. Connection errors are transient; retrying the
+   *  same model avoids needless model hopping. */
+  retryAttempts: number;
+  /** Max fallback hops (model switches) within a single user request before giving up. */
   maxAttemptsPerTurn: number;
   /** How long a failed model is treated as unhealthy and skipped (ms). */
   cooldownMs: number;

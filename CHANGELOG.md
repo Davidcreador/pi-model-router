@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [1.0.3] - 2026-06-23
+
+### Fixed
+
+- **Retry same model before fallback**: on a provider/connection error, the
+  router now retries the same model `retryAttempts` times (default 2) before
+  switching to a fallback. This prevents needless model hopping on transient
+  connection errors.
+- **`deliverAs` option fix**: the replay now uses `deliverAs: "followUp"`
+  (the correct ExtensionAPI option name) instead of `streamingBehavior`,
+  eliminating the "Agent is already processing" error.
+- **No-prompt guard**: if no user prompt was captured, the router notifies
+  instead of silently failing.
+
 ## [1.0.2] - 2026-06-19
 
 ### Fixed

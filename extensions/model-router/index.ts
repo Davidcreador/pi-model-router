@@ -162,9 +162,29 @@ function isContextOverflow(msg: string): boolean {
 }
 
 /**
- * On a terminal agent error (after Pi's own retries), mark the failing model
- * unhealthy, pick a similar available model, and replay the user's prompt on it.
- * Bounded by `maxAttemptsPerTurn` and an attempted-models set to avoid loops.
+ * Replay the last genuine user prompt. Used both for same-model retries and
+ * fallback hops. Sets `pendingResubmit` so the replayed input is not re-routed.
+ *
+ * `deliverAs: "followUp"` queues the replay until the current (failed) turn
+ * finishes. The runtime maps `deliverAs` to its internal `streamingBehavior`;
+ * using the wrong name here was the root cause of the "Agent is already
+ * processing" error. The action wrapper catches internal rejections itself and
+ * emits them as `Extension "<runtime>" error`, so a try/catch at the call
+ * site cannot intercept them — passing the correct option prevents the error.
+ */
+function replayPrompt(pi: ExtensionAPI, text: string): void {
+  store.pendingResubmit = true;
+  const images = (store.lastUserImages as Array<Record<string, unknown>> | undefined) ?? [];
+  const content = images.length ? [{ type: "text", text }, ...images] : text;
+  pi.sendUserMessage(content as never, { deliverAs: "followUp" } as never);
+}
+
+/**
+ * On a terminal agent error (after Pi's own retries), first retry the SAME
+ * model `retryAttempts` times (connection errors are often transient), then
+ * mark it unhealthy, pick a similar available model, and replay the prompt.
+ * Bounded by `retryAttempts` (same-model retries) + `maxAttemptsPerTurn`
+ * (model switches) + an attempted-models set to avoid loops.
  */
 async function handleRuntimeFallback(
   pi: ExtensionAPI,
@@ -186,12 +206,42 @@ async function handleRuntimeFallback(
       : undefined);
   if (!failedKey) return;
 
+  const short = (k: string) => k.split("/").pop();
+  const text = store.lastUserText;
+  if (!text) {
+    // No prompt captured (e.g. agent_end before any input) — can't replay.
+    toast(ctx, `model-router: ${short(failedKey)} errored; no prompt to retry`, "warning");
+    refreshFooter(ctx);
+    return;
+  }
+
+  const maxRetries = config.runtimeFallback.retryAttempts;
+
+  // Phase 1 — Retry the SAME model before switching.
+  // Connection errors and transient provider hiccups often clear on retry.
+  // This avoids needless model hopping that disrupts the user's workflow.
+  if (store.sameModelRetries < maxRetries) {
+    store.sameModelRetries++;
+    toast(
+      ctx,
+      `model-router: ${short(failedKey)} errored, retrying (${store.sameModelRetries}/${maxRetries})`,
+      "warning",
+    );
+    refreshFooter(ctx);
+    replayPrompt(pi, text);
+    return;
+  }
+
+  // Phase 2 — Same-model retries exhausted; switch to a fallback model.
   store.markUnhealthy(failedKey, config.runtimeFallback.cooldownMs);
   store.attemptedModels.add(failedKey);
 
-  const short = (k: string) => k.split("/").pop();
   if (store.fallbackAttempts >= config.runtimeFallback.maxAttemptsPerTurn) {
-    toast(ctx, `model-router: ${short(failedKey)} failed; fallback attempts exhausted`, "warning");
+    toast(
+      ctx,
+      `model-router: ${short(failedKey)} failed; all retries and fallbacks exhausted`,
+      "warning",
+    );
     refreshFooter(ctx);
     return;
   }
@@ -206,6 +256,7 @@ async function handleRuntimeFallback(
 
   store.fallbackAttempts++;
   store.attemptedModels.add(pick.key);
+  store.sameModelRetries = 0; // new model gets its own retry budget
   store.routerSwitching = true;
   try {
     await pi.setModel(pick.model);
@@ -220,25 +271,13 @@ async function handleRuntimeFallback(
   );
   store.lastDecision = d;
   log.record(d);
-  toast(ctx, `model-router: ${short(failedKey)} errored → retrying with ${short(pick.key)}`, "warning");
+  toast(
+    ctx,
+    `model-router: ${short(failedKey)} retries exhausted → switching to ${short(pick.key)}`,
+    "warning",
+  );
   refreshFooter(ctx);
-
-  // Replay the original prompt on the fallback model.
-  const text = store.lastUserText;
-  if (text) {
-    store.pendingResubmit = true;
-    const images = (store.lastUserImages as Array<Record<string, unknown>> | undefined) ?? [];
-    const content = images.length ? [{ type: "text", text }, ...images] : text;
-    try {
-      // `agent_end` fires while Pi still considers the agent streaming, so the
-      // replay must be queued rather than sent immediately. `followUp` waits
-      // for the failed turn to finish and then submits the original prompt.
-      pi.sendUserMessage(content as never, { streamingBehavior: "followUp" } as never);
-    } catch (e) {
-      store.pendingResubmit = false;
-      toast(ctx, `model-router: replay failed: ${(e as Error).message}`, "warning");
-    }
-  }
+  replayPrompt(pi, text);
 }
 
 // ─── core: process one user input ───────────────────────────────────────────

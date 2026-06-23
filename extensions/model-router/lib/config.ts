@@ -82,7 +82,7 @@ export const STARTER_CONFIG: RouterConfig = {
     warnAtPercent: 0.8,
   },
   calibration: { enabled: true, rate: 0.05, maxAdjust: 0.3 },
-  runtimeFallback: { enabled: true, maxAttemptsPerTurn: 2, cooldownMs: 300_000 },
+  runtimeFallback: { enabled: true, retryAttempts: 2, maxAttemptsPerTurn: 2, cooldownMs: 300_000 },
   // Per-model "similar model" chains, tried in order when a model errors or is in
   // cooldown. Unregistered / unauthenticated entries are skipped automatically,
   // so listing a model you have not configured (e.g. kimi) is harmless.

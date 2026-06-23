@@ -50,6 +50,8 @@ export class RouterStore {
   lastUserImages: unknown[] | undefined;
   /** Fallback hops used within the current user request. */
   fallbackAttempts = 0;
+  /** Retries on the SAME model within the current user request (before switching). */
+  sameModelRetries = 0;
   /** Model keys already tried for the current request (avoid loops). */
   attemptedModels = new Set<string>();
   /** True between a fallback switch and its replayed turn, so we don't re-route it. */
@@ -81,6 +83,7 @@ export class RouterStore {
   /** Reset per-request fallback bookkeeping when a fresh user prompt arrives. */
   resetTurnFallback(): void {
     this.fallbackAttempts = 0;
+    this.sameModelRetries = 0;
     this.attemptedModels.clear();
   }
 

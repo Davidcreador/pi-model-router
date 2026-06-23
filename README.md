@@ -199,6 +199,7 @@ Example fallback config:
 {
   "runtimeFallback": {
     "enabled": true,
+    "retryAttempts": 2,
     "maxAttemptsPerTurn": 2,
     "cooldownMs": 300000
   },
