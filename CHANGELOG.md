@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here.
 
+## [1.0.5] - 2026-06-23
+
+### Fixed
+
+- **Debounced fallback to avoid Pi retry conflict**: the root cause of
+  "Retry failed after N attempts: Retry cancelled" was that `agent_end` fires
+  DURING the agent run, BEFORE Pi's own auto-retry cycle. Calling
+  `sendUserMessage` or `setModel` during `agent_end` raced with Pi's retry
+  backoff sleep. Now the handler debounces: each `agent_end` resets a 1.5s
+  timer; when it fires (no more agent_end events = Pi's retries are done),
+  the model switch and prompt replay happen safely on a truly idle agent.
+
+- **Removed same-model retry**: Pi already has its own auto-retry with
+  exponential backoff for connection errors. Our same-model retry was
+  doubling the work and creating conflicts. Now we only switch models when
+  Pi's own retries are exhausted.
+
+- **Debounce cleared on new input/session start**: prevents stale fallback
+  timers from firing after the user starts a new prompt or reloads.
+
 ## [1.0.4] - 2026-06-23
 
 ### Fixed

@@ -62,6 +62,15 @@ let fingerprint = "";
 /** Runtime overrides set via `/route` that must survive config hot-reload. */
 const overrides: { mode?: RouterMode; llmEnabled?: boolean } = {};
 
+/** Debounce timer for deferred fallback. Pi fires agent_end BEFORE its own
+ *  auto-retry cycle, so calling sendUserMessage during agent_end races with
+ *  Pi's retry backoff and causes "Retry cancelled". We debounce: each
+ *  agent_end resets the timer; when it finally fires, Pi's retries are done
+ *  and we can safely switch + replay. */
+let fallbackDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+/** Captured context for the deferred fallback (valid for the session). */
+let fallbackCtx: ExtensionContext | undefined;
+
 // ─── helpers ──────────────────────────────────────────────────────────────
 
 function applyOverrides(cfg: RouterConfig): void {
@@ -161,119 +170,40 @@ function isContextOverflow(msg: string): boolean {
   return /context (window|length)|maximum context|too long|exceeds?\b.*context|prompt is too large/i.test(msg);
 }
 
-/**
- * Deferred replay: wait for Pi to be truly idle before sending the prompt.
- *
- * Calling `sendUserMessage` synchronously during `agent_end` is unreliable:
- * Pi's internal retry system may not have fully settled, causing it to cancel
- * the replayed turn with "Retry failed after N attempts: Retry cancelled".
- *
- * By polling `ctx.isIdle()` and sending only when the agent is truly idle,
- * we get a clean fresh turn with no conflicts. When idle, `sendUserMessage`
- * without `deliverAs` sends immediately and triggers a new turn directly.
- *
- * `pendingResubmit` is set right before the send (not before the wait) so a
- * user message typed during the wait is still routed normally.
- */
-function deferredReplay(pi: ExtensionAPI, ctx: ExtensionContext, text: string): void {
-  const images = (store.lastUserImages as Array<Record<string, unknown>> | undefined) ?? [];
-  const content = images.length ? [{ type: "text", text }, ...images] : text;
-
-  let elapsed = 0;
-  const interval = 100;
-  const maxWait = 5000;
-
-  const trySend = () => {
-    try {
-      // When the agent is truly idle, send immediately — no queue, no conflict
-      // with Pi's retry system. `sendUserMessage` without `deliverAs` triggers
-      // a fresh turn directly when idle.
-      if (ctx.isIdle()) {
-        store.pendingResubmit = true;
-        pi.sendUserMessage(content as never, {} as never);
-        return;
-      }
-      elapsed += interval;
-      if (elapsed >= maxWait) {
-        // Fallback: if Pi never goes idle within 5s, queue as followUp.
-        // This handles edge cases where isIdle() is unreliable.
-        store.pendingResubmit = true;
-        pi.sendUserMessage(content as never, { deliverAs: "followUp" } as never);
-        return;
-      }
-      setTimeout(trySend, interval);
-    } catch {
-      // Context may be stale after session shutdown/reload — abort silently.
-      store.pendingResubmit = false;
-    }
-  };
-  // Small initial delay to let agent_end cleanup finish.
-  setTimeout(trySend, interval);
+/** Clear any pending debounced fallback. Called on new input, session start, etc. */
+function clearFallbackDebounce(): void {
+  if (fallbackDebounceTimer) {
+    clearTimeout(fallbackDebounceTimer);
+    fallbackDebounceTimer = undefined;
+  }
 }
 
 /**
- * On a terminal agent error (after Pi's own retries), first retry the SAME
- * model `retryAttempts` times (connection errors are often transient), then
- * mark it unhealthy, pick a similar available model, and replay the prompt.
- * Bounded by `retryAttempts` (same-model retries) + `maxAttemptsPerTurn`
- * (model switches) + an attempted-models set to avoid loops.
+ * Execute the deferred fallback: switch model and replay the prompt.
+ *
+ * This runs AFTER Pi's own retry cycle is complete (the debounce timer fires
+ * only when no more agent_end events arrive, meaning Pi stopped retrying).
+ * At this point the agent is truly idle and `sendUserMessage` starts a clean
+ * fresh turn with no retry conflicts.
  */
-async function handleRuntimeFallback(
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-  messages: AgentMessageLike[],
-): Promise<void> {
-  if (!config.runtimeFallback.enabled) return;
-  if (config.guard.interactiveOnly && ctx.mode !== "tui") return;
-
-  const lastAssistant = [...(messages ?? [])].reverse().find((m) => m.role === "assistant");
-  if (!lastAssistant || lastAssistant.stopReason !== "error") return;
-  const err = lastAssistant.errorMessage ?? "";
-  if (isContextOverflow(err)) return; // compaction territory, not a model fault
+async function executeDeferredFallback(pi: ExtensionAPI): Promise<void> {
+  if (!fallbackCtx) return;
+  const ctx = fallbackCtx;
+  fallbackCtx = undefined;
 
   const failedKey =
     currentModelKey(ctx) ??
-    (lastAssistant.provider && lastAssistant.model
-      ? `${lastAssistant.provider}/${lastAssistant.model}`
-      : undefined);
+    store.attemptedModels.values().next().value as string | undefined;
   if (!failedKey) return;
 
   const short = (k: string) => k.split("/").pop();
   const text = store.lastUserText;
-  if (!text) {
-    // No prompt captured (e.g. agent_end before any input) — can't replay.
-    toast(ctx, `model-router: ${short(failedKey)} errored; no prompt to retry`, "warning");
-    refreshFooter(ctx);
-    return;
-  }
+  if (!text) return; // nothing to replay
 
-  const maxRetries = config.runtimeFallback.retryAttempts;
-
-  // Phase 1 — Retry the SAME model before switching.
-  // Connection errors and transient provider hiccups often clear on retry.
-  // This avoids needless model hopping that disrupts the user's workflow.
-  if (store.sameModelRetries < maxRetries) {
-    store.sameModelRetries++;
-    toast(
-      ctx,
-      `model-router: ${short(failedKey)} errored, retrying (${store.sameModelRetries}/${maxRetries})`,
-      "warning",
-    );
-    refreshFooter(ctx);
-    deferredReplay(pi, ctx, text);
-    return;
-  }
-
-  // Phase 2 — Same-model retries exhausted; switch to a fallback model.
   store.markUnhealthy(failedKey, config.runtimeFallback.cooldownMs);
-  store.attemptedModels.add(failedKey);
 
   if (store.fallbackAttempts >= config.runtimeFallback.maxAttemptsPerTurn) {
-    toast(
-      ctx,
-      `model-router: ${short(failedKey)} failed; all retries and fallbacks exhausted`,
-      "warning",
-    );
+    toast(ctx, `model-router: ${short(failedKey)} failed; all fallbacks exhausted`, "warning");
     refreshFooter(ctx);
     return;
   }
@@ -288,7 +218,6 @@ async function handleRuntimeFallback(
 
   store.fallbackAttempts++;
   store.attemptedModels.add(pick.key);
-  store.sameModelRetries = 0; // new model gets its own retry budget
   store.routerSwitching = true;
   let switched = false;
   try {
@@ -297,12 +226,11 @@ async function handleRuntimeFallback(
     store.routerSwitching = false;
   }
   if (!switched) {
-    // Model switch failed (e.g. not authenticated) — try next fallback or give up.
     toast(ctx, `model-router: could not switch to ${short(pick.key)}; skipping`, "warning");
     refreshFooter(ctx);
     return;
   }
-  store.pinnedModelKey = undefined; // a fallback hop is not a manual pin
+  store.pinnedModelKey = undefined;
 
   const d = buildDecision(
     store.phase, store.phase, "fallback", 1, {}, ["provider-error"], "runtime-fallback",
@@ -310,13 +238,79 @@ async function handleRuntimeFallback(
   );
   store.lastDecision = d;
   log.record(d);
-  toast(
-    ctx,
-    `model-router: ${short(failedKey)} retries exhausted → switching to ${short(pick.key)}`,
-    "warning",
-  );
+  toast(ctx, `model-router: ${short(failedKey)} failed → switched to ${short(pick.key)}`, "warning");
   refreshFooter(ctx);
-  deferredReplay(pi, ctx, text);
+
+  // Replay the original prompt. The agent is truly idle now (Pi's retries are
+  // done), so sendUserMessage without deliverAs triggers a clean fresh turn.
+  store.pendingResubmit = true;
+  const images = (store.lastUserImages as Array<Record<string, unknown>> | undefined) ?? [];
+  const content = images.length ? [{ type: "text", text }, ...images] : text;
+  try {
+    pi.sendUserMessage(content as never, {} as never);
+  } catch {
+    store.pendingResubmit = false;
+  }
+}
+
+/**
+ * On a terminal agent error, debounce the fallback action.
+ *
+ * Pi has its OWN auto-retry system with exponential backoff. `agent_end` fires
+ * DURING the agent run, BEFORE Pi's retries. If we call `sendUserMessage` or
+ * `setModel` during `agent_end`, it races with Pi's retry backoff sleep and
+ * causes "Retry failed after N attempts: Retry cancelled".
+ *
+ * Solution: debounce. Each `agent_end` resets the timer. When the timer
+ * finally fires (no more agent_end events = Pi's retries are done), we safely
+ * switch model and replay. This lets Pi handle same-model retries, and we only
+ * switch models when Pi gives up.
+ *
+ * Bounded by `maxAttemptsPerTurn` (model switches) + an attempted-models set.
+ */
+async function handleRuntimeFallback(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  messages: AgentMessageLike[],
+): Promise<void> {
+  if (!config.runtimeFallback.enabled) return;
+  if (config.guard.interactiveOnly && ctx.mode !== "tui") return;
+
+  const lastAssistant = [...(messages ?? [])].reverse().find((m) => m.role === "assistant");
+  if (!lastAssistant || lastAssistant.stopReason !== "error") return;
+  const err = lastAssistant.errorMessage ?? "";
+  if (isContextOverflow(err)) return;
+
+  const failedKey =
+    currentModelKey(ctx) ??
+    (lastAssistant.provider && lastAssistant.model
+      ? `${lastAssistant.provider}/${lastAssistant.model}`
+      : undefined);
+  if (!failedKey) return;
+
+  const short = (k: string) => k.split("/").pop();
+  const text = store.lastUserText;
+  if (!text) {
+    toast(ctx, `model-router: ${short(failedKey)} errored; no prompt to replay`, "warning");
+    refreshFooter(ctx);
+    return;
+  }
+
+  // Record the failed model so the fallback picker excludes it.
+  store.attemptedModels.add(failedKey);
+
+  // Debounce: reset the timer on every agent_end. When it fires, Pi's own
+  // retry cycle is complete and we can safely switch + replay.
+  clearFallbackDebounce();
+  fallbackCtx = ctx;
+
+  const debounceMs = 1500; // generous: covers Pi's exponential backoff retries
+  fallbackDebounceTimer = setTimeout(() => {
+    fallbackDebounceTimer = undefined;
+    executeDeferredFallback(pi).catch(() => {
+      store.pendingResubmit = false;
+    });
+  }, debounceMs);
 }
 
 // ─── core: process one user input ───────────────────────────────────────────
@@ -630,6 +624,7 @@ export default function modelRouter(pi: ExtensionAPI): void {
       // Register commands every session_start. On /reload the module may be
       // cached, so a one-time guard can leave commands missing in the new
       // runtime. registerIfFree/registerShortcut swallow conflicts safely.
+      clearFallbackDebounce();
       registerCommands(pi, makeRuntime(pi));
       registerShortcut(pi);
 
@@ -652,6 +647,7 @@ export default function modelRouter(pi: ExtensionAPI): void {
       // Genuine new prompt: remember it (for fallback replay) and reset the
       // per-request fallback bookkeeping.
       if (event.source === "interactive" && !event.streamingBehavior) {
+        clearFallbackDebounce();
         store.lastUserText = event.text ?? "";
         store.lastUserImages = event.images;
         store.resetTurnFallback();
